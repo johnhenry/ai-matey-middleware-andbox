@@ -46,6 +46,51 @@ describe('adaptPythonisms', () => {
   it('converts f-strings to template literals', () => {
     assert.equal(adaptPythonisms('f"hello {name}"'), '`hello ${name}`');
   });
+
+  // #7 (1): only the first {name} in an f-string was being rewritten.
+  it('rewrites every {name} placeholder in an f-string, not just the first', () => {
+    assert.equal(adaptPythonisms('f"{a} and {b}"'), '`${a} and ${b}`');
+    assert.equal(adaptPythonisms('f"{a}-{b}-{c}"'), '`${a}-${b}-${c}`');
+  });
+
+  // #7 (2): dotted/indexed names inside {...} were never rewritten at all.
+  it('rewrites dotted and indexed placeholders like {o.city} and {items[0]}', () => {
+    assert.equal(adaptPythonisms('f"{o.city}"'), '`${o.city}`');
+    assert.equal(adaptPythonisms('f"{items[0]}"'), '`${items[0]}`');
+    assert.equal(adaptPythonisms('f"{o.items[0].name}"'), '`${o.items[0].name}`');
+  });
+
+  // #7 (3): a block that already contains a real ${x} template literal was
+  // getting double-dollared into $${x}, printing a stray "$".
+  it('leaves a block that already contains ${...} untouched instead of double-dollaring it', () => {
+    const code = 'const x = 1;\nconsole.log(`value: ${x}`);';
+    assert.equal(adaptPythonisms(code), code);
+    assert.ok(!adaptPythonisms(code).includes('$${'));
+  });
+
+  // #7 (4): `#` comments and `for x in y:` loops were left as Python
+  // syntax, causing a SyntaxError in the sandbox.
+  it('converts full-line `#` comments to `//`', () => {
+    assert.equal(adaptPythonisms('# a comment\nx = 1'), '// a comment\nx = 1');
+  });
+
+  it('converts simple `for x in y:` loops to JS for-of loops with braces', () => {
+    const python = 'for x in items:\n    print(x)\nprint("done")';
+    const js = adaptPythonisms(python);
+    assert.equal(
+      js,
+      'for (const x of items) {\n    print(x)\n}\nprint("done")'
+    );
+  });
+
+  it('closes nested `for x in y:` loops at the right indentation', () => {
+    const python = 'for x in a:\n  for y in b:\n    print(x, y)\n  print(x)\nprint("end")';
+    const js = adaptPythonisms(python);
+    assert.equal(
+      js,
+      'for (const x of a) {\n  for (const y of b) {\n    print(x, y)\n  }\n  print(x)\n}\nprint("end")'
+    );
+  });
 });
 
 describe('autoAwait', () => {
@@ -99,6 +144,15 @@ describe('formatResults', () => {
     assert.ok(formatted.includes('ReferenceError'));
   });
 
+  // #8 (2): console output printed before a throw was being discarded from
+  // the formatted summary along with the raw result.
+  it('keeps partial output alongside the error message', () => {
+    const results = [{ code: 'print("step 1"); bad()', output: 'step 1', error: 'ReferenceError: bad is not defined' }];
+    const formatted = formatResults(results);
+    assert.ok(formatted.includes('step 1'));
+    assert.ok(formatted.includes('ReferenceError: bad is not defined'));
+  });
+
   it('labels multiple blocks', () => {
     const results = [
       { code: 'a()', output: '1' },
@@ -126,6 +180,16 @@ describe('resultsToToolCalls', () => {
     assert.equal(calls[0].name, '_code_exec');
     assert.ok(calls[0]._result.success);
     assert.equal(calls[0]._result.output, '2');
+  });
+
+  // #8 (2): the synthetic tool call's _result used to hardcode output: ''
+  // on error, throwing away whatever the block printed before it threw.
+  it('carries partial output through on error', () => {
+    const results = [{ code: 'print("partial"); bad()', output: 'partial', error: 'ReferenceError' }];
+    const calls = resultsToToolCalls(results);
+    assert.equal(calls[0]._result.success, false);
+    assert.equal(calls[0]._result.output, 'partial');
+    assert.equal(calls[0]._result.error, 'ReferenceError');
   });
 });
 
@@ -188,6 +252,33 @@ describe('createCodeExecutionMiddleware', () => {
     assert.equal(result._codeResults[0].error, 'Unknown capability: not_a_real_tool');
   });
 
+  // #7: end-to-end proof that a python-tagged block with a multi-placeholder,
+  // dotted-name f-string actually adapts and runs cleanly in the sandbox,
+  // rather than just checking adaptPythonisms() in isolation.
+  it('adapts a python-tagged f-string with multiple dotted placeholders and runs it', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [],
+      executeToolFn: async () => ({}),
+    });
+
+    const response = {
+      content: [
+        '```python',
+        'const o = {"city": "Boston"}',
+        'const name = "Ada"',
+        'print(f"{name} lives in {o.city}")',
+        '```',
+      ].join('\n'),
+    };
+
+    const result = await middleware.after(response);
+
+    assert.equal(result._codeResults[0].error, undefined);
+    assert.ok(result._codeResults[0].output.includes('Ada lives in Boston'));
+  });
+
   it('reuses a pre-built sandbox instance as-is when `sandbox` is passed directly', async () => {
     const calls = [];
     const executeToolFn = async (name, params) => { calls.push(params); return 'ok'; };
@@ -207,6 +298,29 @@ describe('createCodeExecutionMiddleware', () => {
 
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0], { hello: 'world' });
+  });
+
+  // #8 (2): a block that printed output before throwing used to lose that
+  // output entirely -- `_codeResults[0].output` came back as ''.
+  it('keeps console output captured before a block throws', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [],
+      executeToolFn: async () => ({}),
+    });
+
+    const response = {
+      content: '```js\nprint("before the throw");\nthrow new Error("boom");\n```',
+    };
+
+    const result = await middleware.after(response);
+
+    assert.equal(result._codeResults.length, 1);
+    assert.equal(result._codeResults[0].error, 'boom');
+    assert.ok(result._codeResults[0].output.includes('before the throw'));
+    assert.ok(result._resultSummary.includes('before the throw'));
+    assert.ok(result._resultSummary.includes('boom'));
   });
 
   it('throws a clear error when neither sandbox nor createSandbox is provided', () => {

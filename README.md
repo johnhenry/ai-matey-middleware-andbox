@@ -16,6 +16,7 @@ LLMs that don't support native tool calling can still use tools by writing code.
 
 - [Install](#install)
 - [Usage](#usage)
+- [Using with an aimatey Bridge](#using-with-an-aimatey-bridge)
 - [API](#api)
 - [Security model](#security-model)
 - [Family](#family)
@@ -32,6 +33,9 @@ npm install @johnhenry/aimatey-middleware-andbox
 ```bash
 npm install andbox
 ```
+
+TypeScript type declarations (`src/index.d.ts`) ship with the package --
+no `@types/*` install or local shims needed.
 
 ## Usage
 
@@ -85,6 +89,46 @@ const sandbox = await createSandbox({
 const middleware = createCodeExecutionMiddleware({ sandbox, tools, executeToolFn });
 ```
 
+Note: andbox's own `createSandbox()` returns a `Promise<Sandbox>`, not a
+`Sandbox` -- always `await` it (or pass the bare factory as the
+`createSandbox` option above and let this middleware await it for you).
+
+## Using with an aimatey Bridge
+
+`createCodeExecutionMiddleware()` returns a plain `{ after(response) }`
+object that reads/writes `response.content` directly -- it is **not**
+itself an aimatey-core `bridge.use()` middleware function. `bridge.use()`
+expects `(context, next) => Promise<IRChatResponse>`, `context` has no
+response field (only `.request`/`.backend`/`.state`/etc.), and the
+response text produced by the rest of the chain lives at
+`response.message.content` (a `string`, or an array of content blocks
+where text blocks are `{ type: 'text', text }`) -- returned by `await
+next()`, not read off `context`.
+
+A small adapter bridges the two shapes:
+
+```js
+function adaptAfterMiddleware(oldMiddleware) {
+  return async function legacyAfterAdapter(context, next) {
+    const response = await next();
+    const text = typeof response.message.content === 'string'
+      ? response.message.content
+      : response.message.content.map(b => (b.type === 'text' ? b.text : '')).join('');
+    const result = await oldMiddleware.after({ content: text });
+    return { ...response, message: { ...response.message, content: result.content } };
+  };
+}
+
+bridge.use(adaptAfterMiddleware(middleware), { name: 'andbox' });
+```
+
+This keeps `createCodeExecutionMiddleware()` itself free of any dependency
+on aimatey-core's specific `context`/`IRChatResponse` shapes (per the
+[Family](#family) section below) while still giving you a drop-in for
+`bridge.use()`. If you need `_codeResults`/`_toolCalls`/`_resultSummary`
+downstream, read them off `result` in the adapter above instead of
+discarding it.
+
 ## API
 
 ### `createCodeExecutionMiddleware(options)`
@@ -106,7 +150,10 @@ Creates an aimatey middleware object with an `after` hook.
 
 The middleware attaches the following properties to the response:
 
-- `_codeResults` -- Array of `{code, output, error?}` for each executed block
+- `_codeResults` -- Array of `{code, output, error?}` for each executed
+  block. `output` holds captured `console`/`print()` output; if the block
+  threw, `error` is set *and* `output` still holds whatever the block
+  printed before the throw, so partial output isn't lost.
 - `_toolCalls` -- Synthetic tool call entries
 - `_cleanText` -- Response text with code blocks stripped
 - `_resultSummary` -- Formatted summary string
@@ -121,7 +168,20 @@ Remove all fenced code blocks from text.
 
 ### `adaptPythonisms(code)`
 
-Convert Python patterns (`True`, `False`, `None`, f-strings) to JavaScript equivalents.
+Convert Python patterns to JavaScript equivalents: `True`/`False`/`None`;
+f-strings, including multiple placeholders per string and dotted/indexed
+placeholders (`f"{o.city}"`, `f"{items[0]}"`); full-line `#` comments; and
+simple `for x in y:` loops (rewritten to `for (const x of y) { ... }`,
+brace-closed by indentation, including nested loops). A block that already
+contains a real `${...}` template literal is left untouched rather than
+risk rewriting it into `$${...}`.
+
+Only expression-level and these specific statement-level Python-isms are
+handled -- other Python control flow (`if`/`elif`/`else`, `while`, `def`,
+list comprehensions, etc.) is **not** adapted and will raise a
+`SyntaxError` in the sandbox if the model emits it. Prefer prompting the
+model to emit valid JavaScript for anything beyond simple f-strings,
+comments, and flat/nested `for...in` loops.
 
 ### `autoAwait(code, asyncFnPatterns?)`
 

@@ -1,11 +1,15 @@
 {
   "name": "@johnhenry/aimatey-middleware-andbox",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "aimatey middleware for code-based tool execution via andbox sandbox",
   "type": "module",
   "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.mjs"
+    }
   },
   "files": [
     "src",

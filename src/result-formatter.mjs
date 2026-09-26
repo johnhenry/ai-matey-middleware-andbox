@@ -18,7 +18,8 @@ export function formatResults(results, maxResultLength = 4096) {
     const label = results.length > 1 ? `Block ${i + 1}` : 'Result';
 
     if (r.error) {
-      parts.push(`${label} (error): ${truncate(r.error, maxResultLength)}`);
+      const partial = r.output ? `${truncate(r.output, maxResultLength)}\n` : '';
+      parts.push(`${label} (error): ${partial}${truncate(r.error, maxResultLength)}`);
     } else {
       const output = r.output || '(no output)';
       parts.push(`${label}: ${truncate(output, maxResultLength)}`);
@@ -40,7 +41,7 @@ export function resultsToToolCalls(results) {
     name: '_code_exec',
     arguments: JSON.stringify({ code: r.code }),
     _result: r.error
-      ? { success: false, output: '', error: r.error }
+      ? { success: false, output: r.output || '', error: r.error }
       : { success: true, output: r.output || '(executed successfully)' },
   }));
 }

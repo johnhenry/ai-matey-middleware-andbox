@@ -132,7 +132,10 @@ export function createCodeExecutionMiddleware(options) {
 
           results.push({ code: rawCode, output: output || '(no output)' });
         } catch (e) {
-          results.push({ code: rawCode, output: '', error: e.message || String(e) });
+          // Keep whatever the block printed *before* it threw -- discarding
+          // it here would hide partial output that's often the most useful
+          // debugging signal for why the error happened.
+          results.push({ code: rawCode, output: consoleOutput.join('\n'), error: e.message || String(e) });
         }
       }
 

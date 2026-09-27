@@ -1,6 +1,6 @@
 {
   "name": "@johnhenry/aimatey-middleware-andbox",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "aimatey middleware for code-based tool execution via andbox sandbox",
   "type": "module",
   "main": "./src/index.mjs",

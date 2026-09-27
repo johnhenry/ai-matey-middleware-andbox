@@ -32,8 +32,10 @@ export declare function stripCodeBlocks(text: string): string;
  * Light Python-to-JS transform for common patterns: `True`/`False`/`None`,
  * f-strings (including dotted/indexed placeholders like `{o.city}` and
  * multiple placeholders per string), full-line `#` comments, and simple
- * `for x in y:` loops. A block that already contains a real `${...}`
- * template literal is left untouched.
+ * `for x in y:` loops. Detection/rewriting is per string literal: only
+ * actual `f"..."`/`f'...'` f-strings are rewritten, so a real JS template
+ * literal (backtick string, including one with its own `${...}`)
+ * elsewhere in the same block is always left untouched.
  */
 export declare function adaptPythonisms(code: string): string;
 

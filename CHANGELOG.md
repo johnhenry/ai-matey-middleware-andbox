@@ -2,6 +2,25 @@
 
 > Previously published as `ai-matey-middleware-andbox`, last unscoped version `0.1.1`.
 
+## 0.0.2 (2026-09-26)
+
+- Fix: the `0.0.1` fix for the double-dollaring bug worked by having
+  `adaptPythonisms` bail out of rewriting *the entire code block* as soon
+  as it saw a pre-existing `${` anywhere in it, on the theory that any
+  `${` meant the block already contained a real JS template literal that
+  must not be touched again. That's the wrong granularity: a block can
+  legitimately contain *both* a real template literal *and* a separate
+  Python f-string (e.g. `` const label = `${city}`; `` followed by
+  `print(f"{label} is {temp} degrees")`), and bailing on the whole block
+  left the f-string unrewritten too -- trading the old silently-wrong
+  output for a `SyntaxError` in the sandbox instead. Detection and
+  rewriting now happen per string literal rather than per block: only text
+  actually captured as an `f"..."`/`f'...'` f-string's contents is matched
+  and rewritten (placeholder substitution happens in that same step), so a
+  real backtick template literal elsewhere in the block -- including one
+  with its own `${...}` -- is never scanned or touched, and no whole-block
+  bail-out is needed at all. (#10)
+
 ## 0.0.1 (2026-09-26)
 
 Both items below surfaced from actually exercising the middleware against a

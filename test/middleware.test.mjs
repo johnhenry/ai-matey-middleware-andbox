@@ -68,6 +68,63 @@ describe('adaptPythonisms', () => {
     assert.ok(!adaptPythonisms(code).includes('$${'));
   });
 
+  // #10: the #7 (3) fix worked by bailing out of the *entire block* as
+  // soon as it saw a pre-existing `${`, to avoid double-dollaring a real
+  // template literal. That's too coarse -- a block that legitimately mixes
+  // a real JS template literal with a Python f-string got the f-string
+  // left unrewritten too, so the sandbox threw a SyntaxError instead of
+  // the previous silently-wrong output. Detection/rewriting now happens
+  // per string literal: the template literal is untouched, and the
+  // f-string elsewhere in the same block is still rewritten.
+  it('rewrites an f-string while leaving a real template literal elsewhere in the same block untouched (#10)', () => {
+    const code = 'const label = `${city}`;\nprint(f"{label} is {temp} degrees")';
+    const adapted = adaptPythonisms(code);
+    assert.ok(
+      adapted.includes('const label = `${city}`;'),
+      'the real template literal must be left byte-for-byte untouched'
+    );
+    assert.ok(
+      adapted.includes('print(`${label} is ${temp} degrees`)'),
+      'the f-string must still be rewritten to a template literal with its placeholders substituted'
+    );
+    assert.ok(!adapted.includes('$${'), 'must not double-dollar the real template literal');
+  });
+
+  // #10 negative control: a minimal reimplementation of the pre-fix
+  // "bail on the whole block if it contains ${" strategy, to demonstrate
+  // it actually produces the bug described in the issue on this exact
+  // input -- and that the real (fixed) adaptPythonisms does not.
+  it('demonstrates the pre-fix "skip entire block" strategy left the f-string unrewritten (negative control)', () => {
+    const code = 'const label = `${city}`;\nprint(f"{label} is {temp} degrees")';
+
+    function preFixAdaptPythonisms(input) {
+      if (input.includes('${')) return input; // the old, too-coarse bail-out
+      return input; // (rest of the transform is irrelevant once bailed)
+    }
+
+    const preFixResult = preFixAdaptPythonisms(code);
+    // Pre-fix: the whole block is skipped, so the f-string is left as
+    // invalid JS -- `print(f"...")` is a SyntaxError in the sandbox
+    // (`f` is not a valid identifier immediately followed by a string).
+    assert.equal(preFixResult, code);
+    assert.ok(
+      preFixResult.includes('f"{label} is {temp} degrees"'),
+      'pre-fix behavior leaves the f-string unrewritten'
+    );
+    assert.throws(
+      () => new Function(preFixResult),
+      SyntaxError,
+      'pre-fix output is not valid JS'
+    );
+
+    // Post-fix: the real adaptPythonisms rewrites the f-string in place
+    // and produces valid JS, while leaving the template literal alone.
+    const fixedResult = adaptPythonisms(code);
+    assert.doesNotThrow(() => new Function(fixedResult));
+    assert.ok(fixedResult.includes('const label = `${city}`;'));
+    assert.ok(fixedResult.includes('print(`${label} is ${temp} degrees`)'));
+  });
+
   // #7 (4): `#` comments and `for x in y:` loops were left as Python
   // syntax, causing a SyntaxError in the sandbox.
   it('converts full-line `#` comments to `//`', () => {
@@ -277,6 +334,36 @@ describe('createCodeExecutionMiddleware', () => {
 
     assert.equal(result._codeResults[0].error, undefined);
     assert.ok(result._codeResults[0].output.includes('Ada lives in Boston'));
+  });
+
+  // #10: end-to-end proof that a block mixing a real JS template literal
+  // with a Python f-string adapts and runs cleanly -- the template literal
+  // is left untouched and the f-string is still rewritten, rather than the
+  // whole block being skipped (which previously threw a SyntaxError in the
+  // sandbox instead of just printing wrong output).
+  it('adapts a python-tagged block mixing a real template literal with an f-string and runs it', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [],
+      executeToolFn: async () => ({}),
+    });
+
+    const response = {
+      content: [
+        '```python',
+        'const city = "Boston"',
+        'const temp = 72',
+        'const label = `${city}`;',
+        'print(f"{label} is {temp} degrees")',
+        '```',
+      ].join('\n'),
+    };
+
+    const result = await middleware.after(response);
+
+    assert.equal(result._codeResults[0].error, undefined);
+    assert.ok(result._codeResults[0].output.includes('Boston is 72 degrees'));
   });
 
   it('reuses a pre-built sandbox instance as-is when `sandbox` is passed directly', async () => {

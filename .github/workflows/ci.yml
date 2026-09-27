@@ -8,11 +8,9 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: npm install
-      - run: npm test
+    uses: johnhenry/workflows/.github/workflows/ci.yml@v1
+    with:
+      node-versions: '["24"]'
+      os: '["ubuntu-latest"]'
+      install-command: npm install
+      gate-commands: npm test

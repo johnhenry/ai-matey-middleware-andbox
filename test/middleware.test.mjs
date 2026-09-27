@@ -1,8 +1,40 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCodeBlocks, stripCodeBlocks, adaptPythonisms, autoAwait } from '../src/index.mjs';
+import { extractCodeBlocks, stripCodeBlocks, adaptPythonisms, autoAwait, createCodeExecutionMiddleware } from '../src/index.mjs';
 import { toolsToCapabilities, toolsToPreamble } from '../src/tool-injector.mjs';
 import { formatResults, resultsToToolCalls } from '../src/result-formatter.mjs';
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+/**
+ * A minimal fake of andbox's Worker sandbox, faithful to the real
+ * constraint that matters here: capabilities are only ever supplied at
+ * `createSandbox({ capabilities })` time, and `host.call(name, ...)` inside
+ * evaluated code can only reach whatever was captured at that point.
+ */
+function makeFakeAndbox() {
+  const created = [];
+  async function createSandbox(opts = {}) {
+    const capabilities = opts.capabilities || {};
+    created.push(opts);
+    return {
+      async evaluate(code, evalOpts = {}) {
+        const host = {
+          call: async (name, params) => {
+            const fn = capabilities[name];
+            if (!fn) throw new Error(`Unknown capability: ${name}`);
+            return fn(params);
+          },
+        };
+        const log = (...args) => evalOpts.onConsole?.('log', ...args.map(String));
+        const fn = new AsyncFunction('host', 'console', `"use strict";\n${code}`);
+        return fn(host, { log });
+      },
+      dispose: async () => {},
+    };
+  }
+  return { createSandbox, created };
+}
 
 describe('adaptPythonisms', () => {
   it('converts True/False/None', () => {
@@ -13,6 +45,108 @@ describe('adaptPythonisms', () => {
 
   it('converts f-strings to template literals', () => {
     assert.equal(adaptPythonisms('f"hello {name}"'), '`hello ${name}`');
+  });
+
+  // #7 (1): only the first {name} in an f-string was being rewritten.
+  it('rewrites every {name} placeholder in an f-string, not just the first', () => {
+    assert.equal(adaptPythonisms('f"{a} and {b}"'), '`${a} and ${b}`');
+    assert.equal(adaptPythonisms('f"{a}-{b}-{c}"'), '`${a}-${b}-${c}`');
+  });
+
+  // #7 (2): dotted/indexed names inside {...} were never rewritten at all.
+  it('rewrites dotted and indexed placeholders like {o.city} and {items[0]}', () => {
+    assert.equal(adaptPythonisms('f"{o.city}"'), '`${o.city}`');
+    assert.equal(adaptPythonisms('f"{items[0]}"'), '`${items[0]}`');
+    assert.equal(adaptPythonisms('f"{o.items[0].name}"'), '`${o.items[0].name}`');
+  });
+
+  // #7 (3): a block that already contains a real ${x} template literal was
+  // getting double-dollared into $${x}, printing a stray "$".
+  it('leaves a block that already contains ${...} untouched instead of double-dollaring it', () => {
+    const code = 'const x = 1;\nconsole.log(`value: ${x}`);';
+    assert.equal(adaptPythonisms(code), code);
+    assert.ok(!adaptPythonisms(code).includes('$${'));
+  });
+
+  // #10: the #7 (3) fix worked by bailing out of the *entire block* as
+  // soon as it saw a pre-existing `${`, to avoid double-dollaring a real
+  // template literal. That's too coarse -- a block that legitimately mixes
+  // a real JS template literal with a Python f-string got the f-string
+  // left unrewritten too, so the sandbox threw a SyntaxError instead of
+  // the previous silently-wrong output. Detection/rewriting now happens
+  // per string literal: the template literal is untouched, and the
+  // f-string elsewhere in the same block is still rewritten.
+  it('rewrites an f-string while leaving a real template literal elsewhere in the same block untouched (#10)', () => {
+    const code = 'const label = `${city}`;\nprint(f"{label} is {temp} degrees")';
+    const adapted = adaptPythonisms(code);
+    assert.ok(
+      adapted.includes('const label = `${city}`;'),
+      'the real template literal must be left byte-for-byte untouched'
+    );
+    assert.ok(
+      adapted.includes('print(`${label} is ${temp} degrees`)'),
+      'the f-string must still be rewritten to a template literal with its placeholders substituted'
+    );
+    assert.ok(!adapted.includes('$${'), 'must not double-dollar the real template literal');
+  });
+
+  // #10 negative control: a minimal reimplementation of the pre-fix
+  // "bail on the whole block if it contains ${" strategy, to demonstrate
+  // it actually produces the bug described in the issue on this exact
+  // input -- and that the real (fixed) adaptPythonisms does not.
+  it('demonstrates the pre-fix "skip entire block" strategy left the f-string unrewritten (negative control)', () => {
+    const code = 'const label = `${city}`;\nprint(f"{label} is {temp} degrees")';
+
+    function preFixAdaptPythonisms(input) {
+      if (input.includes('${')) return input; // the old, too-coarse bail-out
+      return input; // (rest of the transform is irrelevant once bailed)
+    }
+
+    const preFixResult = preFixAdaptPythonisms(code);
+    // Pre-fix: the whole block is skipped, so the f-string is left as
+    // invalid JS -- `print(f"...")` is a SyntaxError in the sandbox
+    // (`f` is not a valid identifier immediately followed by a string).
+    assert.equal(preFixResult, code);
+    assert.ok(
+      preFixResult.includes('f"{label} is {temp} degrees"'),
+      'pre-fix behavior leaves the f-string unrewritten'
+    );
+    assert.throws(
+      () => new Function(preFixResult),
+      SyntaxError,
+      'pre-fix output is not valid JS'
+    );
+
+    // Post-fix: the real adaptPythonisms rewrites the f-string in place
+    // and produces valid JS, while leaving the template literal alone.
+    const fixedResult = adaptPythonisms(code);
+    assert.doesNotThrow(() => new Function(fixedResult));
+    assert.ok(fixedResult.includes('const label = `${city}`;'));
+    assert.ok(fixedResult.includes('print(`${label} is ${temp} degrees`)'));
+  });
+
+  // #7 (4): `#` comments and `for x in y:` loops were left as Python
+  // syntax, causing a SyntaxError in the sandbox.
+  it('converts full-line `#` comments to `//`', () => {
+    assert.equal(adaptPythonisms('# a comment\nx = 1'), '// a comment\nx = 1');
+  });
+
+  it('converts simple `for x in y:` loops to JS for-of loops with braces', () => {
+    const python = 'for x in items:\n    print(x)\nprint("done")';
+    const js = adaptPythonisms(python);
+    assert.equal(
+      js,
+      'for (const x of items) {\n    print(x)\n}\nprint("done")'
+    );
+  });
+
+  it('closes nested `for x in y:` loops at the right indentation', () => {
+    const python = 'for x in a:\n  for y in b:\n    print(x, y)\n  print(x)\nprint("end")';
+    const js = adaptPythonisms(python);
+    assert.equal(
+      js,
+      'for (const x of a) {\n  for (const y of b) {\n    print(x, y)\n  }\n  print(x)\n}\nprint("end")'
+    );
   });
 });
 
@@ -67,6 +201,15 @@ describe('formatResults', () => {
     assert.ok(formatted.includes('ReferenceError'));
   });
 
+  // #8 (2): console output printed before a throw was being discarded from
+  // the formatted summary along with the raw result.
+  it('keeps partial output alongside the error message', () => {
+    const results = [{ code: 'print("step 1"); bad()', output: 'step 1', error: 'ReferenceError: bad is not defined' }];
+    const formatted = formatResults(results);
+    assert.ok(formatted.includes('step 1'));
+    assert.ok(formatted.includes('ReferenceError: bad is not defined'));
+  });
+
   it('labels multiple blocks', () => {
     const results = [
       { code: 'a()', output: '1' },
@@ -94,6 +237,184 @@ describe('resultsToToolCalls', () => {
     assert.equal(calls[0].name, '_code_exec');
     assert.ok(calls[0]._result.success);
     assert.equal(calls[0]._result.output, '2');
+  });
+
+  // #8 (2): the synthetic tool call's _result used to hardcode output: ''
+  // on error, throwing away whatever the block printed before it threw.
+  it('carries partial output through on error', () => {
+    const results = [{ code: 'print("partial"); bad()', output: 'partial', error: 'ReferenceError' }];
+    const calls = resultsToToolCalls(results);
+    assert.equal(calls[0]._result.success, false);
+    assert.equal(calls[0]._result.output, 'partial');
+    assert.equal(calls[0]._result.error, 'ReferenceError');
+  });
+});
+
+describe('createCodeExecutionMiddleware', () => {
+  it('wires executeToolFn into the sandbox so host.call() reaches the real tool function', async () => {
+    const { createSandbox, created } = makeFakeAndbox();
+    const calls = [];
+    const executeToolFn = async (name, params) => {
+      calls.push({ name, params });
+      return { sum: params.a + params.b };
+    };
+
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [{ name: 'add', description: 'Add two numbers' }],
+      executeToolFn,
+    });
+
+    const response = {
+      content: [
+        'Let me add those numbers:',
+        '```js',
+        'const r = await add({ a: 2, b: 3 });',
+        'print(r.sum);',
+        '```',
+      ].join('\n'),
+    };
+
+    const result = await middleware.after(response);
+
+    // The real tool function was actually invoked with the right args --
+    // this is the core behavior that was previously broken ("Unknown capability").
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], { name: 'add', params: { a: 2, b: 3 } });
+
+    assert.equal(result._codeResults.length, 1);
+    assert.equal(result._codeResults[0].error, undefined);
+    assert.ok(result._codeResults[0].output.includes('5'));
+
+    // The sandbox was created with a capabilities map derived from tools/executeToolFn.
+    assert.equal(created.length, 1);
+    assert.equal(typeof created[0].capabilities.add, 'function');
+  });
+
+  it('rejects unknown tool calls with "Unknown capability" instead of silently succeeding', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const executeToolFn = async () => ({ ok: true });
+
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [{ name: 'known_tool' }],
+      executeToolFn,
+    });
+
+    const response = {
+      content: '```js\nawait host.call("not_a_real_tool", {});\n```',
+    };
+
+    const result = await middleware.after(response);
+    assert.equal(result._codeResults[0].error, 'Unknown capability: not_a_real_tool');
+  });
+
+  // #7: end-to-end proof that a python-tagged block with a multi-placeholder,
+  // dotted-name f-string actually adapts and runs cleanly in the sandbox,
+  // rather than just checking adaptPythonisms() in isolation.
+  it('adapts a python-tagged f-string with multiple dotted placeholders and runs it', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [],
+      executeToolFn: async () => ({}),
+    });
+
+    const response = {
+      content: [
+        '```python',
+        'const o = {"city": "Boston"}',
+        'const name = "Ada"',
+        'print(f"{name} lives in {o.city}")',
+        '```',
+      ].join('\n'),
+    };
+
+    const result = await middleware.after(response);
+
+    assert.equal(result._codeResults[0].error, undefined);
+    assert.ok(result._codeResults[0].output.includes('Ada lives in Boston'));
+  });
+
+  // #10: end-to-end proof that a block mixing a real JS template literal
+  // with a Python f-string adapts and runs cleanly -- the template literal
+  // is left untouched and the f-string is still rewritten, rather than the
+  // whole block being skipped (which previously threw a SyntaxError in the
+  // sandbox instead of just printing wrong output).
+  it('adapts a python-tagged block mixing a real template literal with an f-string and runs it', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [],
+      executeToolFn: async () => ({}),
+    });
+
+    const response = {
+      content: [
+        '```python',
+        'const city = "Boston"',
+        'const temp = 72',
+        'const label = `${city}`;',
+        'print(f"{label} is {temp} degrees")',
+        '```',
+      ].join('\n'),
+    };
+
+    const result = await middleware.after(response);
+
+    assert.equal(result._codeResults[0].error, undefined);
+    assert.ok(result._codeResults[0].output.includes('Boston is 72 degrees'));
+  });
+
+  it('reuses a pre-built sandbox instance as-is when `sandbox` is passed directly', async () => {
+    const calls = [];
+    const executeToolFn = async (name, params) => { calls.push(params); return 'ok'; };
+    const capabilities = toolsToCapabilities([{ name: 'ping' }], executeToolFn);
+
+    const { createSandbox } = makeFakeAndbox();
+    const sandbox = await createSandbox({ capabilities });
+
+    const middleware = createCodeExecutionMiddleware({
+      sandbox,
+      tools: [{ name: 'ping' }],
+      executeToolFn,
+    });
+
+    const response = { content: '```js\nawait ping({ hello: "world" });\n```' };
+    await middleware.after(response);
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], { hello: 'world' });
+  });
+
+  // #8 (2): a block that printed output before throwing used to lose that
+  // output entirely -- `_codeResults[0].output` came back as ''.
+  it('keeps console output captured before a block throws', async () => {
+    const { createSandbox } = makeFakeAndbox();
+    const middleware = createCodeExecutionMiddleware({
+      createSandbox,
+      tools: [],
+      executeToolFn: async () => ({}),
+    });
+
+    const response = {
+      content: '```js\nprint("before the throw");\nthrow new Error("boom");\n```',
+    };
+
+    const result = await middleware.after(response);
+
+    assert.equal(result._codeResults.length, 1);
+    assert.equal(result._codeResults[0].error, 'boom');
+    assert.ok(result._codeResults[0].output.includes('before the throw'));
+    assert.ok(result._resultSummary.includes('before the throw'));
+    assert.ok(result._resultSummary.includes('boom'));
+  });
+
+  it('throws a clear error when neither sandbox nor createSandbox is provided', () => {
+    assert.throws(
+      () => createCodeExecutionMiddleware({ tools: [], executeToolFn: async () => {} }),
+      /requires either a pre-built `sandbox`|createSandbox/
+    );
   });
 });
 

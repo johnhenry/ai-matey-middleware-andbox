@@ -1,11 +1,15 @@
 {
   "name": "@johnhenry/aimatey-middleware-andbox",
-  "version": "0.0.0",
-  "description": "ai.matey middleware for code-based tool execution via andbox sandbox",
+  "version": "0.0.3",
+  "description": "aimatey middleware for code-based tool execution via andbox sandbox",
   "type": "module",
   "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.mjs"
+    }
   },
   "files": [
     "src",
@@ -16,7 +20,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "keywords": [
-    "ai-matey",
+    "aimatey",
     "middleware",
     "sandbox",
     "tools",
@@ -26,12 +30,12 @@
   "homepage": "https://opensource.johnhenry.me/aimatey-middleware-andbox/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/johnhenry/ai-matey-middleware-andbox.git"
+    "url": "git+https://github.com/johnhenry/aimatey-middleware-andbox.git"
   },
   "peerDependencies": {
-    "@johnhenry/andbox": ">=0.0.0"
+    "@johnhenry/andbox": ">=0.0.1"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=26.0.0"
   }
 }

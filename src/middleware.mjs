@@ -28,8 +28,8 @@ import { formatResults, resultsToToolCalls } from './result-formatter.mjs';
 
 /**
  * @typedef {Object} CodeExecutionMiddlewareOptions
- * @property {import('andbox').Sandbox} [sandbox] - A pre-built andbox sandbox instance. Must already have been created with `capabilities: toolsToCapabilities(tools, executeToolFn)` (or equivalent) -- capabilities cannot be added after creation.
- * @property {import('andbox').createSandbox} [createSandbox] - andbox's `createSandbox` factory. If provided (and `sandbox` is not), the middleware creates the sandbox itself, wiring `tools`/`executeToolFn` in as capabilities.
+ * @property {import('@johnhenry/andbox').Sandbox} [sandbox] - A pre-built andbox sandbox instance. Must already have been created with `capabilities: toolsToCapabilities(tools, executeToolFn)` (or equivalent) -- capabilities cannot be added after creation.
+ * @property {import('@johnhenry/andbox').createSandbox} [createSandbox] - andbox's `createSandbox` factory. If provided (and `sandbox` is not), the middleware creates the sandbox itself, wiring `tools`/`executeToolFn` in as capabilities.
  * @property {object} [sandboxOptions] - Extra options merged into the `createSandbox()` call when using the `createSandbox` factory (e.g. `importMap`, `policy`, `onConsole`). Any `capabilities` here are merged with (and can override) the tool-derived ones.
  * @property {Array<{name: string, description?: string, parameters?: object}>} tools - Tool definitions
  * @property {(name: string, params: object) => Promise<any>} executeToolFn - Tool execution function

@@ -8,7 +8,7 @@ Full documentation: [opensource.johnhenry.me/aimatey-middleware-andbox](https://
 
 > **Note:** Previously published as `ai-matey-middleware-andbox@0.1.1`.
 
-[aimatey](https://github.com/johnhenry/aimatey) middleware for code-based tool execution via the [andbox](https://github.com/johnhenry/andbox) sandbox.
+[aimatey](https://github.com/johnhenry/aimatey) middleware for code-based tool execution via the [@johnhenry/andbox](https://github.com/johnhenry/andbox) sandbox.
 
 LLMs that don't support native tool calling can still use tools by writing code. This middleware intercepts LLM responses, extracts fenced code blocks, adapts common Python-isms to JavaScript, and executes them in a sandboxed environment with tool stubs injected as callable functions.
 
@@ -28,10 +28,10 @@ LLMs that don't support native tool calling can still use tools by writing code.
 npm install @johnhenry/aimatey-middleware-andbox
 ```
 
-**Peer dependency:** This package requires `andbox` to be installed separately:
+**Peer dependency:** This package requires `@johnhenry/andbox` to be installed separately:
 
 ```bash
-npm install andbox
+npm install @johnhenry/andbox
 ```
 
 TypeScript type declarations (`src/index.d.ts`) ship with the package --
@@ -48,7 +48,7 @@ with the capabilities already set. The factory form is recommended:
 
 ```js
 import { createCodeExecutionMiddleware } from '@johnhenry/aimatey-middleware-andbox';
-import { createSandbox } from 'andbox';
+import { createSandbox } from '@johnhenry/andbox';
 
 const tools = [
   { name: 'fetch_data', description: 'Fetch data from a URL', parameters: { url: { type: 'string' } } },
@@ -78,7 +78,7 @@ will **not** be able to add capabilities to it later:
 
 ```js
 import { createCodeExecutionMiddleware, toolsToCapabilities } from '@johnhenry/aimatey-middleware-andbox';
-import { createSandbox } from 'andbox';
+import { createSandbox } from '@johnhenry/andbox';
 
 const executeToolFn = async (name, params) => ({ success: true });
 const sandbox = await createSandbox({
@@ -270,7 +270,7 @@ sandbox on the other.
   specific backend or frontend adapter -- any aimatey `Bridge` can use it.
 - **[`@johnhenry/andbox`](https://github.com/johnhenry/andbox)** -- the
   actual code execution happens here. This package is a peer dependency
-  consumer of andbox (`andbox >=0.1.1`): it calls andbox's `createSandbox()`
+  consumer of andbox (`@johnhenry/andbox >=0.0.1`): it calls andbox's `createSandbox()`
   factory (or accepts a pre-built sandbox) and uses `toolsToCapabilities()`
   to translate `tools`/`executeToolFn` into andbox `capabilities`. Every
   guarantee and gap in andbox's own [Security model](https://github.com/johnhenry/andbox#security-model)

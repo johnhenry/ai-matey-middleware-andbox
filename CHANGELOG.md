@@ -2,6 +2,17 @@
 
 > Previously published as `ai-matey-middleware-andbox`, last unscoped version `0.1.1`.
 
+## 0.0.3 (2026-09-27)
+
+- Repoint the `andbox` peer dependency at `@johnhenry/andbox` (`>=0.0.1`),
+  matching andbox's own adoption into the `@johnhenry` npm scope
+  (johnhenry/andbox#2), now that `@johnhenry/andbox` is actually published to
+  npm. Verified the API this middleware calls (`createSandbox({ capabilities,
+  onConsole })` returning `Promise<{ evaluate, ... }>`, `sandbox.evaluate(code,
+  { timeoutMs, onConsole })`, `host.call()`) is unchanged across
+  `@johnhenry/andbox` 0.0.1-0.0.3 -- this is a rename, not an API migration.
+  Sweeps README/JSDoc install and import examples to match.
+
 ## 0.0.2 (2026-09-26)
 
 - Fix: the `0.0.1` fix for the double-dollaring bug worked by having

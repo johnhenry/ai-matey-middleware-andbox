@@ -147,6 +147,31 @@ Creates an aimatey middleware object with an `after` hook.
 | `maxResultLength` | `number` | `4096` | Max characters per result |
 | `codeLanguages` | `string[]` | `['js','javascript','tool_code','python','py','']` | Languages to execute |
 | `timeoutMs` | `number` | `30000` | Execution timeout in ms |
+| `sandboxScope` | `'conversation' \| 'turn'` | `'conversation'` | How long a factory-created sandbox lives. `'conversation'`: created on first use and cached, so andbox's per-sandbox limits accumulate across turns (see below). `'turn'`: a fresh sandbox per `after()` call that has code to run, disposed afterwards, so limits apply per turn. `'turn'` needs the `createSandbox` factory, not a pre-built `sandbox`. |
+
+The returned object also has `resetSandbox()`: it disposes the cached sandbox so the next `after()` call builds a fresh one. It is a no-op before the first use and under `sandboxScope: 'turn'`, and it rejects for a pre-built `sandbox` (the middleware cannot recreate one it was handed).
+
+#### Limits are per sandbox, and the sandbox is cached
+
+With the `createSandbox` factory the middleware creates one sandbox on first use and reuses it for the life of the middleware. andbox's limits are counters on that sandbox, so `policy.limits.maxCalls` (and the other `policy.limits` fields) is **conversation-wide, not per code block or per turn**: after the Nth host call, every later block fails with `Global call limit exceeded (N)`. Pick the scope that matches the budget you mean:
+
+```js
+// "at most 20 host calls per turn"
+createCodeExecutionMiddleware({
+  createSandbox, tools, executeToolFn,
+  sandboxScope: 'turn',
+  sandboxOptions: { policy: { limits: { maxCalls: 20 } } },
+});
+
+// "at most 50 host calls per conversation", with a manual reset after an error
+const mw = createCodeExecutionMiddleware({
+  createSandbox, tools, executeToolFn,
+  sandboxOptions: { policy: { limits: { maxCalls: 50 } } },
+});
+await mw.resetSandbox(); // next turn starts with fresh counters
+```
+
+The cost of `'turn'` is a sandbox (a Worker in andbox) created and torn down per turn, and no module or global state carried between turns. A pre-built `sandbox` is never recreated by the middleware, so its limits accumulate for as long as you keep using it.
 
 The middleware attaches the following properties to the response:
 

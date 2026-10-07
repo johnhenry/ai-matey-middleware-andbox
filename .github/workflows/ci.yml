@@ -10,7 +10,7 @@ jobs:
   test:
     uses: johnhenry/workflows/.github/workflows/ci.yml@v1
     with:
-      node-versions: '["24"]'
+      node-versions: '["26"]'
       os: '["ubuntu-latest"]'
       install-command: npm install
       gate-commands: npm test

@@ -64,7 +64,8 @@ with OS-level isolation, per the README.
 
 ## Releases
 
-Bump `version` in `package.json` in a PR, add the `CHANGELOG.md` entry, merge,
-then `gh release create v<version>` -- the release event triggers
-`.github/workflows/publish.yml`, which is idempotent (skips if the version is
-already on npm).
+Bump `version` in `package.json` in a PR, add the `CHANGELOG.md` entry, and
+merge to `main`. `.github/workflows/publish.yml` triggers on push to `main`: it
+publishes if that version isn't on npm yet (otherwise a clean no-op), then tags
+`v<version>` and creates the GitHub Release itself -- do not also run
+`gh release create`.

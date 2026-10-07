@@ -2,6 +2,22 @@
 
 > Previously published as `ai-matey-middleware-andbox`, last unscoped version `0.1.1`.
 
+## 0.0.4 (2026-10-07)
+
+- Add `sandboxScope: 'conversation' | 'turn'` and `middleware.resetSandbox()`
+  (#13). With the `createSandbox` factory the sandbox is created once and
+  cached, so andbox's per-sandbox limits such as `policy.limits.maxCalls`
+  accumulated across the whole conversation, not per turn. The default stays
+  `'conversation'` (behaviour unchanged). `'turn'` creates a fresh sandbox for
+  each `after()` call that has code to run and disposes it afterwards, so
+  limits apply per turn; it requires the factory (a pre-built `sandbox` cannot
+  be recreated, so that combination throws). `resetSandbox()` disposes the
+  cached sandbox so the next turn starts on a fresh one; it is a no-op before
+  first use and under `'turn'`, and rejects for a pre-built `sandbox`. README
+  documents that limits are per sandbox and the sandbox is cached. Types
+  updated. Tests use a fake andbox that enforces `maxCalls` per sandbox
+  (the real one needs a `Worker`, which Node does not provide).
+
 ## 0.0.3 (2026-09-27)
 
 - Repoint the `andbox` peer dependency at `@johnhenry/andbox` (`>=0.0.1`),

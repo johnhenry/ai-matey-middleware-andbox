@@ -168,6 +168,16 @@ export interface CodeExecutionMiddlewareOptions {
   codeLanguages?: string[];
   /** Execution timeout in milliseconds. @default 30000 */
   timeoutMs?: number;
+  /**
+   * How long a factory-created sandbox lives. `'conversation'` creates it on
+   * first use and caches it, so andbox's per-sandbox limits
+   * (`policy.limits.maxCalls`, ...) accumulate across every `after()` call.
+   * `'turn'` creates a fresh sandbox per `after()` call that has code to run
+   * and disposes it afterwards, so those limits apply per turn; it requires
+   * the `createSandbox` factory (not a pre-built `sandbox`).
+   * @default 'conversation'
+   */
+  sandboxScope?: 'conversation' | 'turn';
 }
 
 /**
@@ -188,6 +198,12 @@ export interface CodeExecutionResponse {
 /** An aimatey middleware object with an `after` hook. */
 export interface CodeExecutionMiddleware {
   after(response: CodeExecutionResponse): Promise<CodeExecutionResponse>;
+  /**
+   * Dispose the cached sandbox so the next `after()` builds a fresh one
+   * (fresh `policy.limits` counters). A no-op before first use and under
+   * `sandboxScope: 'turn'`; rejects for a pre-built `sandbox`.
+   */
+  resetSandbox(): Promise<void>;
 }
 
 /**

@@ -14,3 +14,6 @@ jobs:
       os: '["ubuntu-latest"]'
       install-command: npm install
       gate-commands: npm test
+
+  workflow-lint:
+    uses: johnhenry/workflows/.github/workflows/workflow-lint.yml@v1

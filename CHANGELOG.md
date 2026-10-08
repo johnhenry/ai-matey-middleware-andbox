@@ -2,6 +2,22 @@
 
 > Previously published as `ai-matey-middleware-andbox`, last unscoped version `0.1.1`.
 
+## 0.0.5 (2026-10-08)
+
+- Add `test/real-andbox.test.mjs` (#12): 15 tests against the real
+  `@johnhenry/andbox` (now a devDependency), covering tool calls through
+  `host.call`, python-style blocks, errors with partial output, the capability
+  gate (undeclared and prototype-chain names), `policy.limits.maxCalls`,
+  `sandboxScope` `'conversation'`/`'turn'`, `resetSandbox()` disposal, timeouts
+  with recovery, and pre-built sandboxes. andbox runs under plain Node via
+  `node:worker_threads` since 0.0.4, so no browser is needed.
+- Fix `AGENTS.md`, which claimed all suites ran against a real sandbox: it now
+  says which suites use the real andbox and which use fakes.
+- Peer range raised to `@johnhenry/andbox >=0.1.0` (the 2026-10 security
+  release: capability gate hardening, deny-by-default remote
+  `sandboxImport()`, worker globals removed, abortable capability calls).
+  README's Security model updated to match.
+
 ## 0.0.4 (2026-10-07)
 
 - Add `sandboxScope: 'conversation' | 'turn'` and `middleware.resetSandbox()`

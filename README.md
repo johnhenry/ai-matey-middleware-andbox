@@ -28,7 +28,7 @@ LLMs that don't support native tool calling can still use tools by writing code.
 npm install @johnhenry/aimatey-middleware-andbox
 ```
 
-**Peer dependency:** This package requires `@johnhenry/andbox` to be installed separately:
+**Peer dependency:** This package requires `@johnhenry/andbox` (`>=0.1.0`) to be installed separately. It works under plain Node 26 (andbox's default worker mode runs on `node:worker_threads` when there is no global `Worker`) as well as in browsers:
 
 ```bash
 npm install @johnhenry/andbox
@@ -259,17 +259,21 @@ trust.
   confirmed ways sandboxed code can act outside what `capabilities` appears
   to allow -- see andbox's
   [Security model](https://github.com/johnhenry/andbox#security-model)
-  section for the full, current list, in short: Worker-global APIs
-  (`fetch`, `WebSocket`, `Worker`, `importScripts`, `indexedDB`) are
-  directly reachable regardless of which `capabilities` you supplied, and
-  `sandboxImport()` will load and execute an arbitrary remote URL. This
+  section for the full, current list, in short: a Worker is not a
+  security boundary. andbox 0.1.0 removes the ambient network APIs (`fetch`,
+  `WebSocket`, `Worker`, `importScripts`, ...) from the worker's global scope
+  and refuses remote `sandboxImport()` URLs unless you list the host in
+  `sandboxOptions.allowedImportHosts`, but this is hardening, not
+  containment: the platform `import()` operator, timing channels and (under
+  Node) `process`/`require` stay reachable. This
   middleware inherits every item on that list -- it does not add its own
   isolation layer on top of andbox's.
 - **A timeout stops message delivery to a killed Worker, not an in-flight
   host-side effect a capability call already triggered.** If `executeToolFn`
   has a real side effect (a write, an API call) in flight when `timeoutMs`
   fires, that side effect still completes on the host even though the
-  Worker is killed. Design `executeToolFn` implementations with real side
+  Worker is killed (andbox 0.0.10 aborts a per-call `AbortSignal`, but this
+  middleware does not yet pass that signal on to `executeToolFn`). Design `executeToolFn` implementations with real side
   effects to be idempotent and/or cancellable.
 - **You still need OS-level isolation for adversarial input.** Wiring
   `executeToolFn` into the sandbox (as this package now does correctly)
@@ -295,7 +299,7 @@ sandbox on the other.
   specific backend or frontend adapter -- any aimatey `Bridge` can use it.
 - **[`@johnhenry/andbox`](https://github.com/johnhenry/andbox)** -- the
   actual code execution happens here. This package is a peer dependency
-  consumer of andbox (`@johnhenry/andbox >=0.0.1`): it calls andbox's `createSandbox()`
+  consumer of andbox (`@johnhenry/andbox >=0.1.0`): it calls andbox's `createSandbox()`
   factory (or accepts a pre-built sandbox) and uses `toolsToCapabilities()`
   to translate `tools`/`executeToolFn` into andbox `capabilities`. Every
   guarantee and gap in andbox's own [Security model](https://github.com/johnhenry/andbox#security-model)

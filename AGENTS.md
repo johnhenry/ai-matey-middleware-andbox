@@ -4,24 +4,36 @@
 middleware that routes LLM-authored code through the [andbox](https://github.com/johnhenry/andbox)
 sandbox for code-based tool execution. Single package, Node >= 26,
 `node --test` (`npm test`), ships source directly -- no build step, no
-`dist/`. `andbox` is a peer dependency (`>=0.1.1`), not a direct dependency
--- consumers install it themselves.
+`dist/`. `@johnhenry/andbox` is a peer dependency (`>=0.1.0`), not a direct
+dependency -- consumers install it themselves; it is also a devDependency
+here so the real-sandbox suite can run.
 
 `CLAUDE.md` in this directory is a symlink to this file.
 
 ## The verification loop (before every push)
 
-1. `npm test` -- `node --test test/*.test.mjs`. Both suites
-   (`code-extractor.test.mjs`, `middleware.test.mjs`) run against a real
-   `andbox` sandbox (`mode: 'inline'`/worker as andbox itself exercises it),
-   not a mock -- a change here can be broken by an andbox behavior change
-   even with no code edits in this repo.
+1. `npm test` -- `node --test test/*.test.mjs`. The suites are of two kinds:
+   - **`test/real-andbox.test.mjs` runs against the real `@johnhenry/andbox`**
+     (a devDependency): real `createSandbox`, real worker thread, real
+     `host.call()`, gate, `policy`, timeouts and `dispose()`. Since andbox
+     0.0.4 the default worker mode runs on `node:worker_threads` under plain
+     Node (no global `Worker` needed), so this works in CI. A change here can
+     be broken by an andbox behaviour change even with no code edits in this
+     repo.
+   - `middleware.test.mjs` and `sandbox-scope.test.mjs` use small **hand-rolled
+     fakes** of andbox (`makeFakeAndbox()`, `makeCountingAndbox()`) for speed
+     and to count calls/disposals deterministically. They do **not** prove
+     compatibility with real andbox; the real suite does. `code-extractor`
+     and the adapter tests are pure functions and need no sandbox.
+   Any behaviour that depends on andbox semantics (capability wiring, gate,
+   limits, timeouts) needs a case in the real suite, not only a fake.
 2. A genuinely fresh clone:
    `git clone . /tmp/aimatey-middleware-andbox-verifyN && cd $_ && npm ci && npm test`.
    This is the only way to catch "works on my checked-out tree" bugs
    (missing files in `package.json`'s `files`, undeclared deps) -- and
-   catches whether `andbox` really is resolvable only as a peer dependency,
-   not silently present via a hoisted transitive install.
+   catches an `andbox` that only resolves because of your local tree: it must
+   come from `devDependencies` in the fresh clone, and the peer range
+   (`>=0.1.0`) must match what the real suite was run against.
 3. Commit, push, close the issue with a comment naming the commit SHA.
 
 CI (`.github/workflows/ci.yml`) runs `npm ci` then `npm test`; match it
@@ -49,7 +61,7 @@ locally.
 
 A change is done when all of the following hold, not just when tests pass:
 - A regression test exists for any bug fixed against a real `andbox`
-  sandbox, not a stub -- the `0.0.0` fix shipped because the prior tests
+  sandbox (`test/real-andbox.test.mjs`), not only a fake -- the `0.0.0` fix shipped because the prior tests
   didn't actually exercise `host.call()` end-to-end.
 - Anything the change does **not** do is stated in the README's
   `## Security model`, not only in an issue comment.

@@ -1,6 +1,6 @@
 {
   "name": "@johnhenry/aimatey-middleware-andbox",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "aimatey middleware for code-based tool execution via andbox sandbox",
   "type": "module",
   "main": "./src/index.mjs",
@@ -33,9 +33,12 @@
     "url": "git+https://github.com/johnhenry/aimatey-middleware-andbox.git"
   },
   "peerDependencies": {
-    "@johnhenry/andbox": ">=0.0.1"
+    "@johnhenry/andbox": ">=0.1.0"
   },
   "engines": {
     "node": ">=26.0.0"
+  },
+  "devDependencies": {
+    "@johnhenry/andbox": "^0.1.0"
   }
 }
